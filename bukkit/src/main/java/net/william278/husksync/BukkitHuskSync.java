@@ -40,6 +40,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -198,6 +199,11 @@ public class BukkitHuskSync extends JavaPlugin implements HuskSync {
                 getServer().getPluginManager().disablePlugin(this);
             }
         }
+        Bukkit.getScheduler().runTaskTimerAsynchronously(this,() -> {
+            Bukkit.getOnlinePlayers().forEach(player -> {
+                BackupUtil.handleAutoBackup(this,BukkitPlayer.adapt(player));
+            });
+        },20L * 60L * 30L,20L * 60L * 30L);
     }
 
     @Override

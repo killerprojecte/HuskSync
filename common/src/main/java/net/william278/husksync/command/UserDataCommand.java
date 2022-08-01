@@ -1,8 +1,11 @@
 package net.william278.husksync.command;
 
+import de.themoep.minedown.MineDown;
 import net.william278.husksync.HuskSync;
 import net.william278.husksync.data.DataSaveCause;
 import net.william278.husksync.player.OnlineUser;
+import net.william278.husksync.player.User;
+import net.william278.husksync.util.BackupUtil;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -10,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 public class UserDataCommand extends CommandBase implements TabCompletable {
@@ -171,6 +175,37 @@ public class UserDataCommand extends CommandBase implements TabCompletable {
                                     "/userdata restore <username> <version_uuid>")
                             .ifPresent(player::sendMessage);
                 }
+            }
+            case "backup" -> {
+                if (!player.hasPermission(Permission.COMMAND_BACKUP_DATA.node)){
+                    plugin.getLocales().getLocale("error_no_permission").ifPresent(player::sendMessage);
+                    return;
+                }
+                if (args.length !=2){
+                    plugin.getLocales().getLocale("error_invalid_syntax",
+                                    "/userdata backup <username>")
+                            .ifPresent(player::sendMessage);
+                    return;
+                }
+                final String username = args[1];
+                OnlineUser user = null;
+                Class cs = null;
+                Class bukkit = null;
+                Object p = null;
+                try {
+                    bukkit = Class.forName("org.bukkit.Bukkit");
+                    p = bukkit.getMethod("getPlayer", String.class).invoke(null,username);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                try {
+                    cs = Class.forName("net.william278.husksync.player.BukkitPlayer");
+                    user = (OnlineUser) cs.getMethod("adapt", Class.forName("org.bukkit.entity.Player")).invoke(null,p);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                BackupUtil.handleAutoBackup(plugin,user);
+                player.sendMessage(new MineDown("&aBackup finished"));
             }
             case "pin" -> {
                 if (!player.hasPermission(Permission.COMMAND_USER_DATA_MANAGE.node)) {

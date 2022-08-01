@@ -77,7 +77,16 @@ public enum DataSaveCause {
      *
      * @since 2.0
      */
-    UNKNOWN;
+    UNKNOWN,
+
+    /**
+     * Indicates data was saved by auto backup cause.
+     * </p>
+     * This used in auto backup system
+     *
+     * @since killerprojecte remaked
+     */
+    AUTO_BACKUP;
 
     /**
      * Returns a {@link DataSaveCause} by name.

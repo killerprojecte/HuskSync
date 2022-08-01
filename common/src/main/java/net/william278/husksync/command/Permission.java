@@ -65,7 +65,9 @@ public enum Permission {
     /**
      * Lets the user edit the contents of offline players' ender chests
      */
-    COMMAND_ENDER_CHEST_EDIT("husksync.command.enderchest.edit", DefaultAccess.OPERATORS);
+    COMMAND_ENDER_CHEST_EDIT("husksync.command.enderchest.edit", DefaultAccess.OPERATORS),
+
+    COMMAND_BACKUP_DATA("husksync.command.userdata.backup", DefaultAccess.OPERATORS);
 
 
     public final String node;
