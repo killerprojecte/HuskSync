@@ -1,6 +1,5 @@
 package net.william278.husksync.logger;
 
-import de.themoep.minedown.MineDown;
 import net.william278.husksync.util.Logger;
 import org.jetbrains.annotations.NotNull;
 
@@ -12,7 +11,7 @@ public class DummyLogger extends Logger {
     }
 
     @Override
-    public void log(@NotNull Level level, @NotNull String message, @NotNull Exception e) {
+    public void log(@NotNull Level level, @NotNull String message, @NotNull Throwable e) {
         System.out.println(level.getName() + ": " + message);
         e.printStackTrace();
     }
@@ -20,11 +19,6 @@ public class DummyLogger extends Logger {
     @Override
     public void log(@NotNull Level level, @NotNull String message) {
         System.out.println(level.getName() + ": " + message);
-    }
-
-    @Override
-    public void log(@NotNull Level level, @NotNull MineDown mineDown) {
-        System.out.println(level.getName() + ": " + mineDown.message());
     }
 
     @Override

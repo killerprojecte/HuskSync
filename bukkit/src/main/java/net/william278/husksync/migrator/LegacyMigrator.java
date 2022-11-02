@@ -4,7 +4,6 @@ import com.zaxxer.hikari.HikariDataSource;
 import me.william278.husksync.bukkit.data.DataSerializer;
 import net.william278.hslmigrator.HSLConverter;
 import net.william278.husksync.HuskSync;
-import net.william278.husksync.config.Settings;
 import net.william278.husksync.data.*;
 import net.william278.husksync.player.User;
 import org.bukkit.Material;
@@ -18,6 +17,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.regex.Pattern;
 
@@ -37,11 +37,11 @@ public class LegacyMigrator extends Migrator {
     public LegacyMigrator(@NotNull HuskSync plugin) {
         super(plugin);
         this.hslConverter = HSLConverter.getInstance();
-        this.sourceHost = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_HOST);
-        this.sourcePort = plugin.getSettings().getIntegerValue(Settings.ConfigOption.DATABASE_PORT);
-        this.sourceUsername = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_USERNAME);
-        this.sourcePassword = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_PASSWORD);
-        this.sourceDatabase = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_NAME);
+        this.sourceHost = plugin.getSettings().mySqlHost;
+        this.sourcePort = plugin.getSettings().mySqlPort;
+        this.sourceUsername = plugin.getSettings().mySqlUsername;
+        this.sourcePassword = plugin.getSettings().mySqlPassword;
+        this.sourceDatabase = plugin.getSettings().mySqlDatabase;
         this.sourcePlayersTable = "husksync_players";
         this.sourceDataTable = "husksync_data";
         this.minecraftVersion = plugin.getMinecraftVersion().toString();
@@ -68,14 +68,15 @@ public class LegacyMigrator extends Migrator {
                 connectionPool.setPassword(sourcePassword);
                 connectionPool.setPoolName((getIdentifier() + "_migrator_pool").toUpperCase());
 
-                plugin.getLoggingAdapter().log(Level.INFO, "Downloading raw data from the legacy database...");
+                plugin.getLoggingAdapter().log(Level.INFO, "Downloading raw data from the legacy database (this might take a while)...");
                 final List<LegacyData> dataToMigrate = new ArrayList<>();
                 try (final Connection connection = connectionPool.getConnection()) {
                     try (final PreparedStatement statement = connection.prepareStatement("""
                             SELECT `uuid`, `username`, `inventory`, `ender_chest`, `health`, `max_health`, `health_scale`, `hunger`, `saturation`, `saturation_exhaustion`, `selected_slot`, `status_effects`, `total_experience`, `exp_level`, `exp_progress`, `game_mode`, `statistics`, `is_flying`, `advancements`, `location`
                             FROM `%source_players_table%`
                             INNER JOIN `%source_data_table%`
-                                ON `%source_players_table%`.`id` = `%source_data_table%`.`player_id`;
+                            ON `%source_players_table%`.`id` = `%source_data_table%`.`player_id`
+                            WHERE `username` IS NOT NULL;
                             """.replaceAll(Pattern.quote("%source_players_table%"), sourcePlayersTable)
                             .replaceAll(Pattern.quote("%source_data_table%"), sourceDataTable))) {
                         try (final ResultSet resultSet = statement.executeQuery()) {
@@ -104,7 +105,7 @@ public class LegacyMigrator extends Migrator {
                                         resultSet.getString("location")
                                 ));
                                 playersMigrated++;
-                                if (playersMigrated % 25 == 0) {
+                                if (playersMigrated % 50 == 0) {
                                     plugin.getLoggingAdapter().log(Level.INFO, "Downloaded legacy data for " + playersMigrated + " players...");
                                 }
                             }
@@ -112,14 +113,22 @@ public class LegacyMigrator extends Migrator {
                     }
                 }
                 plugin.getLoggingAdapter().log(Level.INFO, "Completed download of " + dataToMigrate.size() + " entries from the legacy database!");
-                plugin.getLoggingAdapter().log(Level.INFO, "Converting HuskSync 1.x data to the latest HuskSync user data format...");
-                dataToMigrate.forEach(data -> data.toUserData(hslConverter, minecraftVersion).thenAccept(convertedData ->
-                        plugin.getDatabase().ensureUser(data.user()).thenRun(() ->
-                                plugin.getDatabase().setUserData(data.user(), convertedData, DataSaveCause.LEGACY_MIGRATION)
-                                        .exceptionally(exception -> {
-                                            plugin.getLoggingAdapter().log(Level.SEVERE, "Failed to migrate legacy data for " + data.user().username + ": " + exception.getMessage());
-                                            return null;
-                                        }))));
+                plugin.getLoggingAdapter().log(Level.INFO, "Converting HuskSync 1.x data to the new user data format (this might take a while)...");
+
+                final AtomicInteger playersConverted = new AtomicInteger();
+                dataToMigrate.forEach(data -> data.toUserData(hslConverter, minecraftVersion).thenAccept(convertedData -> {
+                    plugin.getDatabase().ensureUser(data.user()).thenRun(() ->
+                            plugin.getDatabase().setUserData(data.user(), convertedData, DataSaveCause.LEGACY_MIGRATION)
+                                    .exceptionally(exception -> {
+                                        plugin.getLoggingAdapter().log(Level.SEVERE, "Failed to migrate legacy data for " + data.user().username + ": " + exception.getMessage());
+                                        return null;
+                                    })).join();
+
+                    playersConverted.getAndIncrement();
+                    if (playersConverted.get() % 50 == 0) {
+                        plugin.getLoggingAdapter().log(Level.INFO, "Converted legacy data for " + playersConverted + " players...");
+                    }
+                }).join());
                 plugin.getLoggingAdapter().log(Level.INFO, "Migration complete for " + dataToMigrate.size() + " users in " + ((System.currentTimeMillis() - startTime) / 1000) + " seconds!");
                 return true;
             } catch (Exception e) {
@@ -277,13 +286,16 @@ public class LegacyMigrator extends Migrator {
                             legacyLocationData == null ? 90f : legacyLocationData.yaw(),
                             legacyLocationData == null ? 180f : legacyLocationData.pitch());
 
-                    return new UserData(new StatusData(health, maxHealth, healthScale, hunger, saturation,
-                            saturationExhaustion, selectedSlot, totalExp, expLevel, expProgress, gameMode, isFlying),
-                            new ItemData(serializedInventory), new ItemData(serializedEnderChest),
-                            new PotionEffectData(serializedPotionEffects), convertedAdvancements,
-                            convertedStatisticData, convertedLocationData,
-                            new PersistentDataContainerData(new HashMap<>()),
-                            minecraftVersion);
+                    return UserData.builder(minecraftVersion)
+                            .setStatus(new StatusData(health, maxHealth, healthScale, hunger, saturation,
+                                    saturationExhaustion, selectedSlot, totalExp, expLevel, expProgress, gameMode, isFlying))
+                            .setInventory(new ItemData(serializedInventory))
+                            .setEnderChest(new ItemData(serializedEnderChest))
+                            .setPotionEffects(new PotionEffectData(serializedPotionEffects))
+                            .setAdvancements(convertedAdvancements)
+                            .setStatistics(convertedStatisticData)
+                            .setLocation(convertedLocationData)
+                            .build();
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }

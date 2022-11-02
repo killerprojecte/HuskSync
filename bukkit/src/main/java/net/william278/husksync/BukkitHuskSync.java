@@ -1,11 +1,8 @@
 package net.william278.husksync;
 
-import dev.dejvokep.boostedyaml.YamlDocument;
-import dev.dejvokep.boostedyaml.dvs.versioning.BasicVersioning;
-import dev.dejvokep.boostedyaml.settings.dumper.DumperSettings;
-import dev.dejvokep.boostedyaml.settings.general.GeneralSettings;
-import dev.dejvokep.boostedyaml.settings.loader.LoaderSettings;
-import dev.dejvokep.boostedyaml.settings.updater.UpdaterSettings;
+import net.kyori.adventure.platform.bukkit.BukkitAudiences;
+import net.william278.annotaml.Annotaml;
+import net.william278.desertwell.Version;
 import net.william278.husksync.command.BukkitCommand;
 import net.william278.husksync.command.BukkitCommandType;
 import net.william278.husksync.command.Permission;
@@ -16,7 +13,6 @@ import net.william278.husksync.data.DataAdapter;
 import net.william278.husksync.data.JsonDataAdapter;
 import net.william278.husksync.database.Database;
 import net.william278.husksync.database.MySqlDatabase;
-import net.william278.husksync.editor.DataEditor;
 import net.william278.husksync.event.BukkitEventCannon;
 import net.william278.husksync.event.EventCannon;
 import net.william278.husksync.hook.PlanHook;
@@ -28,7 +24,10 @@ import net.william278.husksync.migrator.MpdbMigrator;
 import net.william278.husksync.player.BukkitPlayer;
 import net.william278.husksync.player.OnlineUser;
 import net.william278.husksync.redis.RedisManager;
-import net.william278.husksync.util.*;
+import net.william278.husksync.util.BukkitLogger;
+import net.william278.husksync.util.BukkitResourceReader;
+import net.william278.husksync.util.Logger;
+import net.william278.husksync.util.ResourceReader;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
@@ -59,11 +58,12 @@ public class BukkitHuskSync extends JavaPlugin implements HuskSync {
     private ResourceReader resourceReader;
     private EventListener eventListener;
     private DataAdapter dataAdapter;
-    private DataEditor dataEditor;
     private EventCannon eventCannon;
     private Settings settings;
     private Locales locales;
     private List<Migrator> availableMigrators;
+
+    private BukkitAudiences audiences;
     private static BukkitHuskSync instance;
 
     /**
@@ -89,18 +89,21 @@ public class BukkitHuskSync extends JavaPlugin implements HuskSync {
             this.logger = new BukkitLogger(this.getLogger());
             this.resourceReader = new BukkitResourceReader(this);
 
+            // Create adventure audience
+            this.audiences = BukkitAudiences.create(this);
+
             // Load settings and locales
             getLoggingAdapter().log(Level.INFO, "Loading plugin configuration settings & locales...");
             initialized.set(reload().join());
             if (initialized.get()) {
-                logger.showDebugLogs(settings.getBooleanValue(Settings.ConfigOption.DEBUG_LOGGING));
+                logger.showDebugLogs(settings.debugLogging);
                 getLoggingAdapter().log(Level.INFO, "Successfully loaded plugin configuration settings & locales");
             } else {
                 throw new HuskSyncInitializationException("Failed to load plugin configuration settings and/or locales");
             }
 
             // Prepare data adapter
-            if (settings.getBooleanValue(Settings.ConfigOption.SYNCHRONIZATION_COMPRESS_DATA)) {
+            if (settings.compressData) {
                 dataAdapter = new CompressedDataAdapter();
             } else {
                 dataAdapter = new JsonDataAdapter();
@@ -108,9 +111,6 @@ public class BukkitHuskSync extends JavaPlugin implements HuskSync {
 
             // Prepare event cannon
             eventCannon = new BukkitEventCannon();
-
-            // Prepare data editor
-            dataEditor = new DataEditor(locales);
 
             // Prepare migrators
             availableMigrators = new ArrayList<>();
@@ -180,12 +180,27 @@ public class BukkitHuskSync extends JavaPlugin implements HuskSync {
             }
 
             // Check for updates
-            if (settings.getBooleanValue(Settings.ConfigOption.CHECK_FOR_UPDATES)) {
+            if (settings.checkForUpdates) {
                 getLoggingAdapter().log(Level.INFO, "Checking for updates...");
-                CompletableFuture.runAsync(() -> new UpdateChecker(getPluginVersion(), getLoggingAdapter()).logToConsole());
+                getLatestVersionIfOutdated().thenAccept(newestVersion ->
+                        newestVersion.ifPresent(newVersion -> getLoggingAdapter().log(Level.WARNING,
+                                "An update is available for HuskSync, v" + newVersion
+                                + " (Currently running v" + getPluginVersion() + ")")));
             }
         } catch (HuskSyncInitializationException exception) {
-            getLoggingAdapter().log(Level.SEVERE, exception.getMessage());
+            getLoggingAdapter().log(Level.SEVERE, """
+                    ***************************************************
+                               
+                              Failed to initialize HuskSync!
+                               
+                    ***************************************************
+                    The plugin was disabled due to an error. Please check
+                    the logs below for details.
+                    No user data will be synchronised.
+                    ***************************************************
+                    Caused by: %error_message%
+                    """
+                    .replaceAll("%error_message%", exception.getMessage()));
             initialized.set(false);
         } catch (Exception exception) {
             getLoggingAdapter().log(Level.SEVERE, "An unhandled exception occurred initializing HuskSync!", exception);
@@ -244,11 +259,6 @@ public class BukkitHuskSync extends JavaPlugin implements HuskSync {
     }
 
     @Override
-    public @NotNull DataEditor getDataEditor() {
-        return dataEditor;
-    }
-
-    @Override
     public @NotNull EventCannon getEventCannon() {
         return eventCannon;
     }
@@ -274,25 +284,49 @@ public class BukkitHuskSync extends JavaPlugin implements HuskSync {
         return logger;
     }
 
+    @NotNull
     @Override
-    public @NotNull Version getPluginVersion() {
-        return Version.pluginVersion(getDescription().getVersion());
+    public ResourceReader getResourceReader() {
+        return resourceReader;
     }
 
+    @NotNull
     @Override
-    public @NotNull Version getMinecraftVersion() {
-        return Version.minecraftVersion(Bukkit.getBukkitVersion());
+    public Version getPluginVersion() {
+        return Version.fromString(getDescription().getVersion(), "-");
+    }
+
+    @NotNull
+    @Override
+    public Version getMinecraftVersion() {
+        return Version.fromMinecraftVersionString(Bukkit.getBukkitVersion());
+    }
+
+    /**
+     * Returns the adventure Bukkit audiences
+     *
+     * @return The adventure Bukkit audiences
+     */
+    @NotNull
+    public BukkitAudiences getAudiences() {
+        return audiences;
     }
 
     @Override
     public CompletableFuture<Boolean> reload() {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                this.settings = Settings.load(YamlDocument.create(new File(getDataFolder(), "config.yml"), Objects.requireNonNull(resourceReader.getResource("config.yml")), GeneralSettings.builder().setUseDefaults(false).build(), LoaderSettings.builder().setAutoUpdate(true).build(), DumperSettings.builder().setEncoding(DumperSettings.Encoding.UNICODE).build(), UpdaterSettings.builder().setVersioning(new BasicVersioning("config_version")).build()));
+                // Load plugin settings
+                this.settings = Annotaml.create(new File(getDataFolder(), "config.yml"), new Settings()).get();
 
-                this.locales = Locales.load(YamlDocument.create(new File(getDataFolder(), "messages-" + settings.getStringValue(Settings.ConfigOption.LANGUAGE) + ".yml"), Objects.requireNonNull(resourceReader.getResource("locales/" + settings.getStringValue(Settings.ConfigOption.LANGUAGE) + ".yml"))));
+                // Load locales from language preset default
+                final Locales languagePresets = Annotaml.create(Locales.class,
+                        Objects.requireNonNull(getResource("locales/" + settings.language + ".yml"))).get();
+                this.locales = Annotaml.create(new File(getDataFolder(), "messages_" + settings.language + ".yml"),
+                        languagePresets).get();
                 return true;
-            } catch (IOException | NullPointerException e) {
+            } catch (IOException | NullPointerException | InvocationTargetException | IllegalAccessException |
+                     InstantiationException e) {
                 getLoggingAdapter().log(Level.SEVERE, "Failed to load data from the config", e);
                 return false;
             }

@@ -1,54 +1,49 @@
 package net.william278.husksync.config;
 
-import de.themoep.minedown.MineDown;
-import dev.dejvokep.boostedyaml.YamlDocument;
+import de.themoep.minedown.adventure.MineDown;
+import net.william278.annotaml.YamlFile;
+import net.william278.paginedown.ListOptions;
+import org.apache.commons.text.StringEscapeUtils;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Loaded locales used by the plugin to display various locales
+ * Loaded locales used by the plugin to display styled messages
  */
+@YamlFile(rootedMap = true, header = """
+        ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+        ┃      HuskHomes Locales       ┃
+        ┃    Developed by William278   ┃
+        ┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+        ┣╸ See plugin about menu for international locale credits
+        ┣╸ Formatted in MineDown: https://github.com/Phoenix616/MineDown
+        ┗╸ Translate HuskSync: https://william278.net/docs/husksync/Translations""")
 public class Locales {
 
-    public static final String PLUGIN_INFORMATION = """
-            [HuskSync](#00fb9a bold) [| Version %version%](#00fb9a)
-            [A modern, cross-server player data synchronization system](gray)
-            [• Author:](white) [William278](gray show_text=&7Click to visit website open_url=https://william278.net)
-            [• Contributors:](white) [HarvelsX](gray show_text=&7Code), [HookWoods](gray show_text=&7Code)
-            [• Translators:](white) [Namiu](gray show_text=&7\\(うにたろう\\) - Japanese, ja-jp), [anchelthe](gray show_text=&7Spanish, es-es), [Melonzio](gray show_text=&7Spanish, es-es), [Ceddix](gray show_text=&7German, de-de), [mateusneresrb](gray show_text=&7Brazilian Portuguese, pt-br], [小蔡](gray show_text=&7Traditional Chinese, zh-tw), [Ghost-chu](gray show_text=&7Simplified Chinese, zh-cn), [DJelly4K](gray show_text=&7Simplified Chinese, zh-cn), [Thourgard](gray show_text=&7Ukrainian, uk-ua), [xF3d3](gray show_text=&7Italian, it-it)
-            [• Documentation:](white) [[Link]](#00fb9a show_text=&7Click to open link open_url=https://william278.net/docs/husksync/Home/)
-            [• Bug reporting:](white) [[Link]](#00fb9a show_text=&7Click to open link open_url=https://github.com/WiIIiam278/HuskSync/issues)
-            [• Discord support:](white) [[Link]](#00fb9a show_text=&7Click to join open_url=https://discord.gg/tVYhJfyDWG)""";
-
+    /**
+     * The raw set of locales loaded from yaml
+     */
     @NotNull
-    private final HashMap<String, String> rawLocales;
-
-    private Locales(@NotNull YamlDocument localesConfig) {
-        this.rawLocales = new HashMap<>();
-        for (String localeId : localesConfig.getRoutesAsStrings(false)) {
-            rawLocales.put(localeId, localesConfig.getString(localeId));
-        }
-    }
+    public Map<String, String> rawLocales = new HashMap<>();
 
     /**
-     * Returns an un-formatted locale loaded from the locales file
+     * Returns a raw, un-formatted locale loaded from the locales file
      *
      * @param localeId String identifier of the locale, corresponding to a key in the file
      * @return An {@link Optional} containing the locale corresponding to the id, if it exists
      */
     public Optional<String> getRawLocale(@NotNull String localeId) {
-        if (rawLocales.containsKey(localeId)) {
-            return Optional.of(rawLocales.get(localeId).replaceAll(Pattern.quote("\\n"), "\n"));
-        }
-        return Optional.empty();
+        return Optional.ofNullable(rawLocales.get(localeId)).map(StringEscapeUtils::unescapeJava);
     }
 
     /**
-     * Returns an un-formatted locale loaded from the locales file, with replacements applied
+     * Returns a raw, un-formatted locale loaded from the locales file, with replacements applied
+     * <p>
+     * Note that replacements will not be MineDown-escaped; use {@link #escapeMineDown(String)} to escape replacements
      *
      * @param localeId     String identifier of the locale, corresponding to a key in the file
      * @param replacements Ordered array of replacement strings to fill in placeholders with
@@ -70,13 +65,16 @@ public class Locales {
 
     /**
      * Returns a MineDown-formatted locale from the locales file, with replacements applied
+     * <p>
+     * Note that replacements will be MineDown-escaped before application
      *
      * @param localeId     String identifier of the locale, corresponding to a key in the file
      * @param replacements Ordered array of replacement strings to fill in placeholders with
      * @return An {@link Optional} containing the replacement-applied, formatted locale corresponding to the id, if it exists
      */
     public Optional<MineDown> getLocale(@NotNull String localeId, @NotNull String... replacements) {
-        return getRawLocale(localeId, replacements).map(MineDown::new);
+        return getRawLocale(localeId, Arrays.stream(replacements).map(Locales::escapeMineDown)
+                .toArray(String[]::new)).map(MineDown::new);
     }
 
     /**
@@ -86,54 +84,75 @@ public class Locales {
      * @param replacements Ordered array of replacement strings to fill in placeholders with
      * @return the raw locale, with inserted placeholders
      */
+    @NotNull
     private String applyReplacements(@NotNull String rawLocale, @NotNull String... replacements) {
         int replacementIndexer = 1;
         for (String replacement : replacements) {
             String replacementString = "%" + replacementIndexer + "%";
             rawLocale = rawLocale.replace(replacementString, replacement);
-            replacementIndexer = replacementIndexer + 1;
+            replacementIndexer += 1;
         }
         return rawLocale;
     }
 
     /**
-     * Load the locales from a BoostedYaml {@link YamlDocument} locales file
+     * Escape a string from {@link MineDown} formatting for use in a MineDown-formatted locale
+     * <p>
+     * Although MineDown provides {@link MineDown#escape(String)}, that method fails to escape events
+     * properly when using the escaped string in a replacement, so this is used instead
      *
-     * @param localesConfig The loaded {@link YamlDocument} locales.yml file
-     * @return the loaded {@link Locales}
+     * @param string The string to escape
+     * @return The escaped string
      */
-    public static Locales load(@NotNull YamlDocument localesConfig) {
-        return new Locales(localesConfig);
+    @NotNull
+    public static String escapeMineDown(@NotNull String string) {
+        final StringBuilder value = new StringBuilder();
+        for (int i = 0; i < string.length(); ++i) {
+            char c = string.charAt(i);
+            boolean isEscape = c == '\\';
+            boolean isColorCode = i + 1 < string.length() && (c == 167 || c == '&');
+            boolean isEvent = c == '[' || c == ']' || c == '(' || c == ')';
+            if (isEscape || isColorCode || isEvent) {
+                value.append('\\');
+            }
+
+            value.append(c);
+        }
+        return value.toString();
     }
 
     /**
-     * Strips a string of basic MineDown formatting, used for displaying plugin info to console
+     * Returns the base list options to use for a paginated chat list
      *
-     * @param string The string to strip
-     * @return The MineDown-stripped string
+     * @param itemsPerPage The number of items to display per page
+     * @return The list options
      */
-    public String stripMineDown(@NotNull String string) {
-        final String[] in = string.split("\n");
-        final StringBuilder out = new StringBuilder();
-        String regex = "[^\\[\\]() ]*\\[([^()]+)]\\([^()]+open_url=(\\S+).*\\)";
+    @NotNull
+    public ListOptions.Builder getBaseChatList(int itemsPerPage) {
+        return new ListOptions.Builder()
+                .setFooterFormat(getRawLocale("list_footer",
+                        "%previous_page_button%", "%current_page%",
+                        "%total_pages%", "%next_page_button%", "%page_jumpers%").orElse(""))
+                .setNextButtonFormat(getRawLocale("list_next_page_button",
+                        "%next_page_index%", "%command%").orElse(""))
+                .setPreviousButtonFormat(getRawLocale("list_previous_page_button",
+                        "%previous_page_index%", "%command%").orElse(""))
+                .setPageJumpersFormat(getRawLocale("list_page_jumpers",
+                        "%page_jump_buttons%").orElse(""))
+                .setPageJumperPageFormat(getRawLocale("list_page_jumper_button",
+                        "%target_page_index%", "%command%").orElse(""))
+                .setPageJumperCurrentPageFormat(getRawLocale("list_page_jumper_current_page",
+                        "%current_page%").orElse(""))
+                .setPageJumperPageSeparator(getRawLocale("list_page_jumper_separator").orElse(""))
+                .setPageJumperGroupSeparator(getRawLocale("list_page_jumper_group_separator").orElse(""))
+                .setItemsPerPage(itemsPerPage)
+                .setEscapeItemsMineDown(false)
+                .setSpaceAfterHeader(false)
+                .setSpaceBeforeFooter(false);
+    }
 
-        for (int i = 0; i < in.length; i++) {
-            Pattern pattern = Pattern.compile(regex);
-            Matcher m = pattern.matcher(in[i]);
-
-            if (m.find()) {
-                out.append(in[i].replace(m.group(0), ""));
-                out.append(m.group(2));
-            } else {
-                out.append(in[i]);
-            }
-
-            if (i + 1 != in.length) {
-                out.append("\n");
-            }
-        }
-
-        return out.toString();
+    @SuppressWarnings("unused")
+    public Locales() {
     }
 
 }

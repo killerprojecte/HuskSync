@@ -1,6 +1,7 @@
 package net.william278.husksync.command;
 
-import net.william278.husksync.HuskSync;
+import me.lucko.commodore.CommodoreProvider;
+import net.william278.husksync.BukkitHuskSync;
 import net.william278.husksync.player.BukkitPlayer;
 import org.bukkit.command.*;
 import org.bukkit.entity.Player;
@@ -18,14 +19,14 @@ public class BukkitCommand implements CommandExecutor, TabExecutor {
     /**
      * The {@link CommandBase} that will be executed
      */
-    private final CommandBase command;
+    protected final CommandBase command;
 
     /**
      * The implementing plugin
      */
-    private final HuskSync plugin;
+    private final BukkitHuskSync plugin;
 
-    public BukkitCommand(@NotNull CommandBase command, @NotNull HuskSync implementor) {
+    public BukkitCommand(@NotNull CommandBase command, @NotNull BukkitHuskSync implementor) {
         this.command = command;
         this.plugin = implementor;
     }
@@ -40,6 +41,9 @@ public class BukkitCommand implements CommandExecutor, TabExecutor {
         pluginCommand.setTabCompleter(this);
         pluginCommand.setPermission(command.permission);
         pluginCommand.setDescription(command.getDescription());
+        if (CommodoreProvider.isSupported()) {
+            BrigadierUtil.registerCommodore(plugin, pluginCommand, command);
+        }
     }
 
     @Override
@@ -51,8 +55,9 @@ public class BukkitCommand implements CommandExecutor, TabExecutor {
             if (this.command instanceof ConsoleExecutable consoleExecutable) {
                 consoleExecutable.onConsoleExecute(args);
             } else {
-                plugin.getLocales().getLocale("error_in_game_command_only").
-                        ifPresent(locale -> sender.spigot().sendMessage(locale.toComponent()));
+                plugin.getLocales().getLocale("error_in_game_command_only")
+                        .ifPresent(locale -> plugin.getAudiences().sender(sender)
+                                .sendMessage(locale.toComponent()));
             }
         }
         return true;

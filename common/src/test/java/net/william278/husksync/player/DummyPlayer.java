@@ -1,15 +1,12 @@
 package net.william278.husksync.player;
 
-import de.themoep.minedown.MineDown;
+import de.themoep.minedown.adventure.MineDown;
+import net.william278.husksync.config.Settings;
 import net.william278.husksync.data.*;
-import net.william278.husksync.editor.ItemEditorMenu;
-import net.william278.husksync.util.Version;
+import net.william278.desertwell.Version;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 public class DummyPlayer extends OnlineUser {
@@ -31,7 +28,7 @@ public class DummyPlayer extends OnlineUser {
     }
 
     @Override
-    public CompletableFuture<Void> setStatus(@NotNull StatusData statusData, @NotNull List<StatusDataFlag> statusDataFlags) {
+    public CompletableFuture<Void> setStatus(@NotNull StatusData statusData, @NotNull Settings settings) {
         return CompletableFuture.runAsync(() -> {
             // do nothing
         });
@@ -132,7 +129,7 @@ public class DummyPlayer extends OnlineUser {
     @NotNull
     @Override
     public Version getMinecraftVersion() {
-        return Version.minecraftVersion("1.19-beta123456");
+        return Version.fromMinecraftVersionString("1.19-beta123456");
     }
 
     @Override
@@ -151,8 +148,16 @@ public class DummyPlayer extends OnlineUser {
     }
 
     @Override
-    public void showMenu(@NotNull ItemEditorMenu menu) {
+    public CompletableFuture<Optional<ItemData>> showMenu(@NotNull ItemData itemData, boolean editable,
+                                                          int minimumRows, @NotNull MineDown title) {
         // do nothing
+        return CompletableFuture.completedFuture(Optional.empty());
+    }
+
+
+    @Override
+    public boolean isDead() {
+        return false;
     }
 
 }

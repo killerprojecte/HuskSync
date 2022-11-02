@@ -1,12 +1,15 @@
 package net.william278.husksync.player;
 
-import de.themoep.minedown.MineDown;
-import net.md_5.bungee.api.ChatMessageType;
-import net.md_5.bungee.api.chat.BaseComponent;
+import de.themoep.minedown.adventure.MineDown;
+import de.themoep.minedown.adventure.MineDownParser;
+import dev.triumphteam.gui.builder.gui.StorageBuilder;
+import dev.triumphteam.gui.guis.Gui;
+import dev.triumphteam.gui.guis.StorageGui;
+import net.kyori.adventure.audience.Audience;
+import net.william278.desertwell.Version;
 import net.william278.husksync.BukkitHuskSync;
+import net.william278.husksync.config.Settings;
 import net.william278.husksync.data.*;
-import net.william278.husksync.editor.ItemEditorMenu;
-import net.william278.husksync.util.Version;
 import org.bukkit.*;
 import org.bukkit.advancement.Advancement;
 import org.bukkit.advancement.AdvancementProgress;
@@ -14,7 +17,7 @@ import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.event.player.PlayerTeleportEvent;
-import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.potion.PotionEffect;
@@ -47,10 +50,12 @@ public class BukkitPlayer extends OnlineUser {
             PersistentDataType.TAG_CONTAINER};
 
     private final Player player;
+    private final Audience audience;
 
     private BukkitPlayer(@NotNull Player player) {
         super(player.getUniqueId(), player.getName());
         this.player = player;
+        this.audience = BukkitHuskSync.getInstance().getAudiences().player(player);
     }
 
     public static BukkitPlayer adapt(@NotNull Player player) {
@@ -81,23 +86,22 @@ public class BukkitPlayer extends OnlineUser {
     }
 
     @Override
-    public CompletableFuture<Void> setStatus(@NotNull StatusData statusData,
-                                             @NotNull List<StatusDataFlag> statusDataFlags) {
+    public CompletableFuture<Void> setStatus(@NotNull StatusData statusData, @NotNull Settings settings) {
         return CompletableFuture.runAsync(() -> {
             double currentMaxHealth = Objects.requireNonNull(player.getAttribute(Attribute.GENERIC_MAX_HEALTH))
                     .getBaseValue();
-            if (statusDataFlags.contains(StatusDataFlag.SET_MAX_HEALTH)) {
+            if (settings.getSynchronizationFeature(Settings.SynchronizationFeature.MAX_HEALTH)) {
                 if (statusData.maxHealth != 0d) {
                     Objects.requireNonNull(player.getAttribute(Attribute.GENERIC_MAX_HEALTH))
                             .setBaseValue(statusData.maxHealth);
                     currentMaxHealth = statusData.maxHealth;
                 }
             }
-            if (statusDataFlags.contains(StatusDataFlag.SET_HEALTH)) {
+            if (settings.getSynchronizationFeature(Settings.SynchronizationFeature.HEALTH)) {
                 final double currentHealth = player.getHealth();
                 if (statusData.health != currentHealth) {
                     final double healthToSet = currentHealth > currentMaxHealth ? currentMaxHealth : statusData.health;
-                    if (healthToSet <= 0) {
+                    if (healthToSet < 1) {
                         Bukkit.getScheduler().runTask(BukkitHuskSync.getInstance(), () -> player.setHealth(healthToSet));
                     } else {
                         player.setHealth(healthToSet);
@@ -111,24 +115,24 @@ public class BukkitPlayer extends OnlineUser {
                 }
                 player.setHealthScaled(statusData.healthScale != 0D);
             }
-            if (statusDataFlags.contains(StatusDataFlag.SET_HUNGER)) {
+            if (settings.getSynchronizationFeature(Settings.SynchronizationFeature.HUNGER)) {
                 player.setFoodLevel(statusData.hunger);
                 player.setSaturation(statusData.saturation);
                 player.setExhaustion(statusData.saturationExhaustion);
             }
-            if (statusDataFlags.contains(StatusDataFlag.SET_SELECTED_ITEM_SLOT)) {
+            if (settings.getSynchronizationFeature(Settings.SynchronizationFeature.INVENTORIES)) {
                 player.getInventory().setHeldItemSlot(statusData.selectedItemSlot);
             }
-            if (statusDataFlags.contains(StatusDataFlag.SET_EXPERIENCE)) {
+            if (settings.getSynchronizationFeature(Settings.SynchronizationFeature.EXPERIENCE)) {
                 player.setTotalExperience(statusData.totalExperience);
                 player.setLevel(statusData.expLevel);
                 player.setExp(statusData.expProgress);
             }
-            if (statusDataFlags.contains(StatusDataFlag.SET_GAME_MODE)) {
+            if (settings.getSynchronizationFeature(Settings.SynchronizationFeature.GAME_MODE)) {
                 Bukkit.getScheduler().runTask(BukkitHuskSync.getInstance(), () ->
                         player.setGameMode(GameMode.valueOf(statusData.gameMode)));
             }
-            if (statusDataFlags.contains(StatusDataFlag.SET_FLYING)) {
+            if (settings.getSynchronizationFeature(Settings.SynchronizationFeature.LOCATION)) {
                 Bukkit.getScheduler().runTask(BukkitHuskSync.getInstance(), () -> {
                     if (statusData.isFlying) {
                         player.setAllowFlight(true);
@@ -554,7 +558,7 @@ public class BukkitPlayer extends OnlineUser {
     @NotNull
     @Override
     public Version getMinecraftVersion() {
-        return Version.minecraftVersion(Bukkit.getBukkitVersion());
+        return Version.fromMinecraftVersionString(Bukkit.getBukkitVersion());
     }
 
     @Override
@@ -563,23 +567,72 @@ public class BukkitPlayer extends OnlineUser {
     }
 
     @Override
-    public void showMenu(@NotNull ItemEditorMenu menu) {
-        BukkitSerializer.deserializeItemStackArray(menu.itemData.serializedItems).thenAccept(inventoryContents -> {
-            final Inventory inventory = Bukkit.createInventory(player, menu.itemEditorMenuType.slotCount,
-                    BaseComponent.toLegacyText(menu.menuTitle.toComponent()));
-            inventory.setContents(inventoryContents);
-            Bukkit.getScheduler().runTask(BukkitHuskSync.getInstance(), () -> player.openInventory(inventory));
+    public CompletableFuture<Optional<ItemData>> showMenu(@NotNull ItemData itemData, boolean editable,
+                                                          int minimumRows, @NotNull MineDown title) {
+        final CompletableFuture<Optional<ItemData>> updatedData = new CompletableFuture<>();
+
+        // Deserialize the item data to be shown and show it in a triumph GUI
+        BukkitSerializer.deserializeItemStackArray(itemData.serializedItems).thenAccept(items -> {
+            // Build the GUI and populate with items
+            final int itemCount = items.length;
+            final StorageBuilder guiBuilder = Gui.storage()
+                    .title(title.toComponent())
+                    .rows(Math.max(minimumRows, (int) Math.ceil(itemCount / 9.0)))
+                    .disableAllInteractions()
+                    .enableOtherActions();
+            final StorageGui gui = editable ? guiBuilder.enableAllInteractions().create() : guiBuilder.create();
+            for (int i = 0; i < itemCount; i++) {
+                if (items[i] != null) {
+                    gui.getInventory().setItem(i, items[i]);
+                }
+            }
+
+            // Complete the future with updated data (if editable) when the GUI is closed
+            gui.setCloseGuiAction(event -> {
+                if (!editable) {
+                    updatedData.complete(Optional.empty());
+                    return;
+                }
+
+                // Get and save the updated items
+                final ItemStack[] updatedItems = Arrays.copyOf(event.getPlayer().getOpenInventory()
+                        .getTopInventory().getContents().clone(), itemCount);
+                BukkitSerializer.serializeItemStackArray(updatedItems).thenAccept(serializedItems -> {
+                    if (serializedItems.equals(itemData.serializedItems)) {
+                        updatedData.complete(Optional.empty());
+                        return;
+                    }
+                    updatedData.complete(Optional.of(new ItemData(serializedItems)));
+                });
+            });
+
+            // Display the GUI (synchronously; on the main server thread)
+            Bukkit.getScheduler().runTask(BukkitHuskSync.getInstance(), () -> gui.open(player));
+        }).exceptionally(throwable -> {
+            // Handle exceptions
+            updatedData.completeExceptionally(throwable);
+            return null;
         });
+        return updatedData;
+    }
+
+    @Override
+    public boolean isDead() {
+        return player.getHealth() < 1;
     }
 
     @Override
     public void sendActionBar(@NotNull MineDown mineDown) {
-        player.spigot().sendMessage(ChatMessageType.ACTION_BAR, mineDown.replace().toComponent());
+        audience.sendActionBar(mineDown
+                .disable(MineDownParser.Option.SIMPLE_FORMATTING)
+                .replace().toComponent());
     }
 
     @Override
     public void sendMessage(@NotNull MineDown mineDown) {
-        player.spigot().sendMessage(mineDown.replace().toComponent());
+        audience.sendMessage(mineDown
+                .disable(MineDownParser.Option.SIMPLE_FORMATTING)
+                .replace().toComponent());
     }
 
     /**

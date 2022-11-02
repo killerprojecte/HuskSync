@@ -1,10 +1,9 @@
 package net.william278.husksync.listener;
 
 import net.william278.husksync.BukkitHuskSync;
+import net.william278.husksync.data.BukkitInventoryMap;
 import net.william278.husksync.data.BukkitSerializer;
-import net.william278.husksync.data.DataSerializationException;
 import net.william278.husksync.data.ItemData;
-import net.william278.husksync.editor.ItemEditorMenuType;
 import net.william278.husksync.player.BukkitPlayer;
 import net.william278.husksync.player.OnlineUser;
 import org.bukkit.Bukkit;
@@ -14,21 +13,19 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.WorldSaveEvent;
+import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
-import java.util.logging.Level;
 import java.util.stream.Collectors;
 
 public class BukkitEventListener extends EventListener implements Listener {
@@ -50,30 +47,36 @@ public class BukkitEventListener extends EventListener implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onWorldSave(@NotNull WorldSaveEvent event) {
-        CompletableFuture.runAsync(() -> super.handleAsyncWorldSave(event.getWorld().getPlayers().stream()
-                .map(BukkitPlayer::adapt).collect(Collectors.toList())));
+        // Handle saving player data snapshots when the world saves
+        if (!plugin.getSettings().saveOnWorldSave) return;
+
+        CompletableFuture.runAsync(() -> super.saveOnWorldSave(event.getWorld().getPlayers()
+                .stream().map(BukkitPlayer::adapt)
+                .collect(Collectors.toList())));
     }
 
     @EventHandler(ignoreCancelled = true)
-    public void onInventoryClose(@NotNull InventoryCloseEvent event) {
-        CompletableFuture.runAsync(() -> {
-            if (event.getPlayer() instanceof Player player) {
-                final OnlineUser user = BukkitPlayer.adapt(player);
-                plugin.getDataEditor().getEditingInventoryData(user).ifPresent(menu -> {
-                    try {
-                        BukkitSerializer.serializeItemStackArray(Arrays.copyOf(event.getInventory().getContents(),
-                                menu.itemEditorMenuType == ItemEditorMenuType.INVENTORY_VIEWER
-                                        ? player.getInventory().getSize()
-                                        : player.getEnderChest().getSize())).thenAccept(
-                                serializedInventory -> super.handleMenuClose(user, new ItemData(serializedInventory)));
-                    } catch (DataSerializationException e) {
-                        plugin.getLoggingAdapter().log(Level.SEVERE,
-                                "Failed to serialize inventory data during menu close", e);
-                    }
-                });
-            }
-        });
+    public void onPlayerDeath(PlayerDeathEvent event) {
+        final OnlineUser user = BukkitPlayer.adapt(event.getEntity());
+
+        // If the player is locked or the plugin disabling, clear their drops
+        if (cancelPlayerEvent(user)) {
+            event.getDrops().clear();
+            return;
+        }
+
+        // Handle saving player data snapshots on death
+        if (!plugin.getSettings().saveOnDeath) return;
+
+        // Truncate the drops list to the inventory size and save the player's inventory
+        final int maxInventorySize = BukkitInventoryMap.INVENTORY_SLOT_COUNT;
+        if (event.getDrops().size() > maxInventorySize) {
+            event.getDrops().subList(maxInventorySize, event.getDrops().size()).clear();
+        }
+        BukkitSerializer.serializeItemStackArray(event.getDrops().toArray(new ItemStack[0]))
+                .thenAccept(serializedDrops -> super.saveOnPlayerDeath(user, new ItemData(serializedDrops)));
     }
+
 
     /*
      * Events to cancel if the player has not been set yet
@@ -108,23 +111,16 @@ public class BukkitEventListener extends EventListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onInventoryClick(@NotNull InventoryClickEvent event) {
-        if (event.getWhoClicked() instanceof Player player) {
-            event.setCancelled(cancelInventoryClick(BukkitPlayer.adapt(player)));
-        }
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInventoryOpen(@NotNull InventoryOpenEvent event) {
         if (event.getPlayer() instanceof Player player) {
             event.setCancelled(cancelPlayerEvent(BukkitPlayer.adapt(player)));
         }
     }
 
-    @EventHandler(ignoreCancelled = true)
-    public void onPlayerDeath(PlayerDeathEvent event) {
-        if (cancelPlayerEvent(BukkitPlayer.adapt(event.getEntity()))) {
-            event.getDrops().clear();
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPlayerTakeDamage(@NotNull EntityDamageEvent event) {
+        if (event.getEntity() instanceof Player player) {
+            event.setCancelled(cancelPlayerEvent(BukkitPlayer.adapt(player)));
         }
     }
 

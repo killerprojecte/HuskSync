@@ -1,19 +1,21 @@
 package net.william278.husksync.command;
 
+import de.themoep.minedown.adventure.MineDown;
 import net.william278.husksync.HuskSync;
 import net.william278.husksync.data.DataSaveCause;
 import net.william278.husksync.data.UserData;
+import net.william278.husksync.data.UserDataBuilder;
 import net.william278.husksync.data.UserDataSnapshot;
-import net.william278.husksync.editor.ItemEditorMenu;
 import net.william278.husksync.player.OnlineUser;
 import net.william278.husksync.player.User;
 import org.jetbrains.annotations.NotNull;
 
-import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.List;
-import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.logging.Level;
 import java.util.stream.Collectors;
 
 public class InventoryCommand extends CommandBase implements TabCompletable {
@@ -58,23 +60,43 @@ public class InventoryCommand extends CommandBase implements TabCompletable {
                                    @NotNull User dataOwner, boolean allowEdit) {
         CompletableFuture.runAsync(() -> {
             final UserData data = userDataSnapshot.userData();
-            final ItemEditorMenu menu = ItemEditorMenu.createInventoryMenu(data.getInventoryData(),
-                    dataOwner, player, plugin.getLocales(), allowEdit);
-            plugin.getLocales().getLocale("viewing_inventory_of", dataOwner.username,
-                            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, Locale.getDefault())
-                                    .format(userDataSnapshot.versionTimestamp()))
-                    .ifPresent(player::sendMessage);
-            plugin.getDataEditor().openItemEditorMenu(player, menu).thenAccept(inventoryDataOnClose -> {
-                if (!menu.canEdit) {
-                    return;
-                }
-                final UserData updatedUserData = new UserData(data.getStatusData(), inventoryDataOnClose,
-                        data.getEnderChestData(), data.getPotionEffectsData(), data.getAdvancementData(),
-                        data.getStatisticsData(), data.getLocationData(),
-                        data.getPersistentDataContainerData(),
-                        plugin.getMinecraftVersion().toString());
-                plugin.getDatabase().setUserData(dataOwner, updatedUserData, DataSaveCause.INVENTORY_COMMAND).join();
-                plugin.getRedisManager().sendUserDataUpdate(dataOwner, updatedUserData).join();
+            data.getInventory().ifPresent(itemData -> {
+                // Show message
+                plugin.getLocales().getLocale("inventory_viewer_opened", dataOwner.username,
+                                new SimpleDateFormat("MMM dd yyyy, HH:mm:ss.sss")
+                                        .format(userDataSnapshot.versionTimestamp()))
+                        .ifPresent(player::sendMessage);
+
+                // Show inventory menu
+                player.showMenu(itemData, allowEdit, 5, plugin.getLocales()
+                                .getLocale("inventory_viewer_menu_title", dataOwner.username)
+                                .orElse(new MineDown("Inventory Viewer")))
+                        .exceptionally(throwable -> {
+                            plugin.getLoggingAdapter().log(Level.WARNING, "Exception displaying inventory menu to " + player.username, throwable);
+                            return Optional.empty();
+                        })
+                        .thenAccept(dataOnClose -> {
+                            if (dataOnClose.isEmpty() || !allowEdit) {
+                                return;
+                            }
+
+                            // Create the updated data
+                            final UserDataBuilder builder = UserData.builder(plugin.getMinecraftVersion());
+                            data.getStatus().ifPresent(builder::setStatus);
+                            data.getAdvancements().ifPresent(builder::setAdvancements);
+                            data.getLocation().ifPresent(builder::setLocation);
+                            data.getPersistentDataContainer().ifPresent(builder::setPersistentDataContainer);
+                            data.getStatistics().ifPresent(builder::setStatistics);
+                            data.getPotionEffects().ifPresent(builder::setPotionEffects);
+                            data.getEnderChest().ifPresent(builder::setEnderChest);
+                            builder.setInventory(dataOnClose.get());
+
+                            // Set the updated data
+                            final UserData updatedUserData = builder.build();
+                            plugin.getDatabase()
+                                    .setUserData(dataOwner, updatedUserData, DataSaveCause.INVENTORY_COMMAND)
+                                    .thenRun(() -> plugin.getRedisManager().sendUserDataUpdate(dataOwner, updatedUserData));
+                        });
             });
         });
     }

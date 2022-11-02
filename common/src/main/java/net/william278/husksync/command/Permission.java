@@ -18,7 +18,7 @@ public enum Permission {
     /**
      * Lets the user view plugin info {@code /husksync info}
      */
-    COMMAND_HUSKSYNC_INFO("husksync.command.husksync.info", DefaultAccess.EVERYONE),
+    COMMAND_HUSKSYNC_ABOUT("husksync.command.husksync.info", DefaultAccess.EVERYONE),
     /**
      * Lets the user reload the plugin {@code /husksync reload}
      */
@@ -40,6 +40,11 @@ public enum Permission {
      * Lets the user restore and delete user data {@code /userdata restore/delete (player) (version_uuid)}
      */
     COMMAND_USER_DATA_MANAGE("husksync.command.userdata.manage", DefaultAccess.OPERATORS),
+
+    /**
+     * Lets the user dump user data to a file or the web {@code /userdata dump (player) (version_uuid)}
+     */
+    COMMAND_USER_DATA_DUMP("husksync.command.userdata.dump", DefaultAccess.NOBODY),
 
     /*
      * /inventory command permissions

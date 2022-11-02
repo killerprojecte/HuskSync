@@ -2,7 +2,6 @@ package net.william278.husksync.migrator;
 
 import com.zaxxer.hikari.HikariDataSource;
 import net.william278.husksync.BukkitHuskSync;
-import net.william278.husksync.config.Settings;
 import net.william278.husksync.data.*;
 import net.william278.husksync.player.User;
 import net.william278.mpdbconverter.MPDBConverter;
@@ -16,8 +15,11 @@ import org.jetbrains.annotations.NotNull;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.regex.Pattern;
 
@@ -40,11 +42,11 @@ public class MpdbMigrator extends Migrator {
     public MpdbMigrator(@NotNull BukkitHuskSync plugin, @NotNull Plugin mySqlPlayerDataBridge) {
         super(plugin);
         this.mpdbConverter = MPDBConverter.getInstance(mySqlPlayerDataBridge);
-        this.sourceHost = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_HOST);
-        this.sourcePort = plugin.getSettings().getIntegerValue(Settings.ConfigOption.DATABASE_PORT);
-        this.sourceUsername = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_USERNAME);
-        this.sourcePassword = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_PASSWORD);
-        this.sourceDatabase = plugin.getSettings().getStringValue(Settings.ConfigOption.DATABASE_NAME);
+        this.sourceHost = plugin.getSettings().mySqlHost;
+        this.sourcePort = plugin.getSettings().mySqlPort;
+        this.sourceUsername = plugin.getSettings().mySqlUsername;
+        this.sourcePassword = plugin.getSettings().mySqlPassword;
+        this.sourceDatabase = plugin.getSettings().mySqlDatabase;
         this.sourceInventoryTable = "mpdb_inventory";
         this.sourceEnderChestTable = "mpdb_enderchest";
         this.sourceExperienceTable = "mpdb_experience";
@@ -73,7 +75,7 @@ public class MpdbMigrator extends Migrator {
                 connectionPool.setPassword(sourcePassword);
                 connectionPool.setPoolName((getIdentifier() + "_migrator_pool").toUpperCase());
 
-                plugin.getLoggingAdapter().log(Level.INFO, "Downloading raw data from the MySQLPlayerDataBridge database...");
+                plugin.getLoggingAdapter().log(Level.INFO, "Downloading raw data from the MySQLPlayerDataBridge database (this might take a while)...");
                 final List<MpdbData> dataToMigrate = new ArrayList<>();
                 try (final Connection connection = connectionPool.getConnection()) {
                     try (final PreparedStatement statement = connection.prepareStatement("""
@@ -108,14 +110,21 @@ public class MpdbMigrator extends Migrator {
                     }
                 }
                 plugin.getLoggingAdapter().log(Level.INFO, "Completed download of " + dataToMigrate.size() + " entries from the MySQLPlayerDataBridge database!");
-                plugin.getLoggingAdapter().log(Level.INFO, "Converting raw MySQLPlayerDataBridge data to HuskSync user data...");
-                dataToMigrate.forEach(data -> data.toUserData(mpdbConverter, minecraftVersion).thenAccept(convertedData ->
-                        plugin.getDatabase().ensureUser(data.user()).thenRun(() ->
-                                        plugin.getDatabase().setUserData(data.user(), convertedData, DataSaveCause.MPDB_MIGRATION))
-                                .exceptionally(exception -> {
-                                    plugin.getLoggingAdapter().log(Level.SEVERE, "Failed to migrate MySQLPlayerDataBridge data for " + data.user().username + ": " + exception.getMessage());
-                                    return null;
-                                })));
+                plugin.getLoggingAdapter().log(Level.INFO, "Converting raw MySQLPlayerDataBridge data to HuskSync user data (this might take a while)...");
+
+                final AtomicInteger playersConverted = new AtomicInteger();
+                dataToMigrate.forEach(data -> data.toUserData(mpdbConverter, minecraftVersion).thenAccept(convertedData -> {
+                    plugin.getDatabase().ensureUser(data.user()).thenRun(() ->
+                                    plugin.getDatabase().setUserData(data.user(), convertedData, DataSaveCause.MPDB_MIGRATION))
+                            .exceptionally(exception -> {
+                                plugin.getLoggingAdapter().log(Level.SEVERE, "Failed to migrate MySQLPlayerDataBridge data for " + data.user().username + ": " + exception.getMessage());
+                                return null;
+                            }).join();
+                    playersConverted.getAndIncrement();
+                    if (playersConverted.get() % 50 == 0) {
+                        plugin.getLoggingAdapter().log(Level.INFO, "Converted MySQLPlayerDataBridge data for " + playersConverted + " players...");
+                    }
+                }).join());
                 plugin.getLoggingAdapter().log(Level.INFO, "Migration complete for " + dataToMigrate.size() + " users in " + ((System.currentTimeMillis() - startTime) / 1000) + " seconds!");
                 return true;
             } catch (Exception e) {
@@ -272,18 +281,14 @@ public class MpdbMigrator extends Migrator {
                 }
 
                 // Create user data record
-                return new UserData(new StatusData(20, 20, 0, 20, 10,
-                        1, 0, totalExp, expLevel, expProgress, "SURVIVAL",
-                        false),
-                        new ItemData(BukkitSerializer.serializeItemStackArray(inventory.getContents()).join()),
-                        new ItemData(BukkitSerializer.serializeItemStackArray(converter
-                                .getItemStackFromSerializedData(serializedEnderChest)).join()),
-                        new PotionEffectData(""), new ArrayList<>(),
-                        new StatisticsData(new HashMap<>(), new HashMap<>(), new HashMap<>(), new HashMap<>()),
-                        new LocationData("world", UUID.randomUUID(), "NORMAL", 0, 0, 0,
-                                0f, 0f),
-                        new PersistentDataContainerData(new HashMap<>()),
-                        minecraftVersion);
+                return UserData.builder(minecraftVersion)
+                        .setStatus(new StatusData(20, 20, 0, 20, 10,
+                                1, 0, totalExp, expLevel, expProgress, "SURVIVAL",
+                                false))
+                        .setInventory(new ItemData(BukkitSerializer.serializeItemStackArray(inventory.getContents()).join()))
+                        .setEnderChest(new ItemData(BukkitSerializer.serializeItemStackArray(converter
+                                .getItemStackFromSerializedData(serializedEnderChest)).join()))
+                        .build();
             });
         }
     }
