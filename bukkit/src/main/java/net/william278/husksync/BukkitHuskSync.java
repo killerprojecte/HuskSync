@@ -28,6 +28,7 @@ import net.william278.husksync.util.BukkitLogger;
 import net.william278.husksync.util.BukkitResourceReader;
 import net.william278.husksync.util.Logger;
 import net.william278.husksync.util.ResourceReader;
+import net.william278.husksync.util.BackupUtil;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
