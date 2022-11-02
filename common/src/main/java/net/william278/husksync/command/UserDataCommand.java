@@ -1,5 +1,5 @@
 package net.william278.husksync.command;
-import de.themop.minedown.adventure.MineDown;
+import de.themoep.minedown.adventure.MineDown;
 import net.william278.husksync.HuskSync;
 import net.william278.husksync.data.DataSaveCause;
 import net.william278.husksync.data.UserData;
