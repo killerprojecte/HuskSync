@@ -122,8 +122,8 @@ public abstract class EventListener {
     private void handleSynchronisationCompletion(@NotNull OnlineUser user, boolean succeeded) {
         if (succeeded) {
             plugin.getLocales().getLocale("synchronisation_complete").ifPresent(user::sendActionBar);
-            lockedPlayers.remove(user.uuid);
             plugin.getDatabase().ensureUser(user).join();
+            lockedPlayers.remove(user.uuid);
             plugin.getEventCannon().fireSyncCompleteEvent(user);
         } else {
             plugin.getLocales().getLocale("synchronisation_failed")
@@ -154,7 +154,7 @@ public abstract class EventListener {
                         optionalUserData -> optionalUserData.ifPresent(userData -> plugin.getRedisManager()
                                 .setUserData(user, userData).thenRun(() -> plugin.getDatabase()
                                         .setUserData(user, userData, DataSaveCause.DISCONNECT)))))
-                .thenRun(() -> lockedPlayers.remove(user.uuid)).exceptionally(throwable -> {
+                .exceptionally(throwable -> {
                     plugin.getLoggingAdapter().log(Level.SEVERE,
                             "An exception occurred handling a player disconnection");
                     throwable.printStackTrace();
@@ -196,11 +196,11 @@ public abstract class EventListener {
     /**
      * Determine whether a player event should be cancelled
      *
-     * @param user {@link OnlineUser} performing the event
+     * @param userUuid The UUID of the user to check
      * @return Whether the event should be cancelled
      */
-    protected final boolean cancelPlayerEvent(@NotNull OnlineUser user) {
-        return disabling || lockedPlayers.contains(user.uuid);
+    protected final boolean cancelPlayerEvent(@NotNull UUID userUuid) {
+        return disabling || lockedPlayers.contains(userUuid);
     }
 
     /**
@@ -209,10 +209,17 @@ public abstract class EventListener {
     public final void handlePluginDisable() {
         disabling = true;
 
-        plugin.getOnlineUsers().stream().filter(user -> !lockedPlayers.contains(user.uuid)).forEach(
-                user -> user.getUserData(plugin.getLoggingAdapter(), plugin.getSettings()).join().ifPresent(
-                        userData -> plugin.getDatabase().setUserData(user, userData, DataSaveCause.SERVER_SHUTDOWN).join()));
+        // Save data for all online users
+        plugin.getOnlineUsers().stream()
+                .filter(user -> !lockedPlayers.contains(user.uuid))
+                .forEach(user -> {
+                    lockedPlayers.add(user.uuid);
+                    user.getUserData(plugin.getLoggingAdapter(), plugin.getSettings()).join()
+                            .ifPresent(userData -> plugin.getDatabase()
+                                    .setUserData(user, userData, DataSaveCause.SERVER_SHUTDOWN).join());
+                });
 
+        // Close outstanding connections
         plugin.getDatabase().close();
         plugin.getRedisManager().close();
     }

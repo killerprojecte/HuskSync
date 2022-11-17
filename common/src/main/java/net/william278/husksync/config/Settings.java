@@ -7,7 +7,6 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Plugin settings, read from config.yml
@@ -19,8 +18,7 @@ import java.util.Optional;
         ┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
         ┣╸ Information: https://william278.net/project/husksync
         ┗╸ Documentation: https://william278.net/docs/husksync""",
-
-        versionField = "config_version", versionNumber = 2)
+        versionField = "config_version", versionNumber = 3)
 public class Settings {
 
     // Top-level settings
@@ -47,7 +45,7 @@ public class Settings {
     @YamlKey("database.credentials.database")
     public String mySqlDatabase = "HuskSync";
 
-    @YamlKey("database.mysql.credentials.username")
+    @YamlKey("database.credentials.username")
     public String mySqlUsername = "root";
 
     @YamlKey("database.credentials.password")
@@ -77,8 +75,7 @@ public class Settings {
 
     @NotNull
     public String getTableName(@NotNull TableName tableName) {
-        return Optional.ofNullable(tableNames.get(tableName.name().toLowerCase()))
-                .orElse(tableName.defaultName);
+        return tableNames.getOrDefault(tableName.name().toLowerCase(), tableName.defaultName);
     }
 
 
@@ -121,8 +118,20 @@ public class Settings {
     public Map<String, Boolean> synchronizationFeatures = SynchronizationFeature.getDefaults();
 
     public boolean getSynchronizationFeature(@NotNull SynchronizationFeature feature) {
-        return Optional.ofNullable(synchronizationFeatures.get(feature.name().toLowerCase()))
-                .orElse(feature.enabledByDefault);
+        return synchronizationFeatures.getOrDefault(feature.name().toLowerCase(), feature.enabledByDefault);
+    }
+
+    @YamlKey("synchronization.event_priorities")
+    public Map<String, String> synchronizationEventPriorities = EventType.getDefaults();
+
+    @NotNull
+    public EventPriority getEventPriority(@NotNull Settings.EventType eventType) {
+        try {
+            return EventPriority.valueOf(synchronizationEventPriorities.get(eventType.name().toLowerCase()));
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+            return EventPriority.NORMAL;
+        }
     }
 
 
@@ -139,11 +148,13 @@ public class Settings {
             this.defaultName = defaultName;
         }
 
+        @NotNull
         private Map.Entry<String, String> toEntry() {
             return Map.entry(name().toLowerCase(), defaultName);
         }
 
         @SuppressWarnings("unchecked")
+        @NotNull
         private static Map<String, String> getDefaults() {
             return Map.ofEntries(Arrays.stream(values())
                     .map(TableName::toEntry)
@@ -155,7 +166,6 @@ public class Settings {
      * Represents enabled synchronisation features
      */
     public enum SynchronizationFeature {
-
         INVENTORIES(true),
         ENDER_CHESTS(true),
         HEALTH(true),
@@ -167,6 +177,7 @@ public class Settings {
         GAME_MODE(true),
         STATISTICS(true),
         PERSISTENT_DATA_CONTAINER(false),
+        LOCKED_MAPS(true),
         LOCATION(false);
 
         private final boolean enabledByDefault;
@@ -175,16 +186,65 @@ public class Settings {
             this.enabledByDefault = enabledByDefault;
         }
 
+        @NotNull
         private Map.Entry<String, Boolean> toEntry() {
             return Map.entry(name().toLowerCase(), enabledByDefault);
         }
 
         @SuppressWarnings("unchecked")
+        @NotNull
         private static Map<String, Boolean> getDefaults() {
             return Map.ofEntries(Arrays.stream(values())
                     .map(SynchronizationFeature::toEntry)
                     .toArray(Map.Entry[]::new));
         }
+    }
+
+    /**
+     * Represents events that HuskSync listens to, with a configurable priority listener
+     */
+    public enum EventType {
+        JOIN_LISTENER(EventPriority.LOWEST),
+        QUIT_LISTENER(EventPriority.LOWEST),
+        DEATH_LISTENER(EventPriority.NORMAL);
+
+        private final EventPriority defaultPriority;
+
+        EventType(@NotNull EventPriority defaultPriority) {
+            this.defaultPriority = defaultPriority;
+        }
+
+        @NotNull
+        private Map.Entry<String, String> toEntry() {
+            return Map.entry(name().toLowerCase(), defaultPriority.name());
+        }
+
+
+        @SuppressWarnings("unchecked")
+        @NotNull
+        private static Map<String, String> getDefaults() {
+            return Map.ofEntries(Arrays.stream(values())
+                    .map(EventType::toEntry)
+                    .toArray(Map.Entry[]::new));
+        }
+    }
+
+    /**
+     * Represents priorities for events that HuskSync listens to
+     */
+    public enum EventPriority {
+        /**
+         * Listens and processes the event execution last
+         */
+        HIGHEST,
+        /**
+         * Listens in between {@link #HIGHEST} and {@link #LOWEST} priority marked
+         */
+        NORMAL,
+        /**
+         * Listens and processes the event execution first
+         */
+        LOWEST
     }
 
 }
